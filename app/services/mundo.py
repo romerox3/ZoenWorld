@@ -16,6 +16,7 @@ class Mundo:
         self.recursos = self.generar_recursos()
         self.tiempo = 0
         self.temperatura = 20
+        self.tiempo_reproduccion = 1000  # Tiempo entre reproducciones
 
     def iniciar(self):
         self.running = True
@@ -32,6 +33,11 @@ class Mundo:
         self.tiempo += 1
         self.actualizar_temperatura()
         db = next(get_db())
+        
+        # Reproducción
+        if self.tiempo % self.tiempo_reproduccion == 0:
+            self.reproducir_entidades()
+        
         for entidad in self.entidades:
             entidad.actualizar(self)
             db_entidad = db.query(EntidadModel).filter(EntidadModel.nombre == entidad.nombre).first()
@@ -40,7 +46,25 @@ class Mundo:
                 db_entidad.posicion_y = entidad.posicion_y
                 db_entidad.energia = entidad.energia
                 db_entidad.puntuacion = entidad.puntuacion
+                db_entidad.genes = entidad.genes
+                db_entidad.generacion = entidad.generacion
         db.commit()
+
+    def reproducir_entidades(self):
+        nuevas_entidades = []
+        entidades_ordenadas = sorted(self.entidades, key=lambda e: e.puntuacion, reverse=True)
+        num_reproducir = len(entidades_ordenadas) // 2
+        
+        for i in range(num_reproducir):
+            padre = entidades_ordenadas[i]
+            madre = random.choice(entidades_ordenadas[:num_reproducir])
+            if padre != madre:
+                hijo = padre.reproducir(madre)
+                nuevas_entidades.append(hijo)
+        
+        # Eliminar las entidades con peor desempeño
+        self.entidades = entidades_ordenadas[:len(self.entidades) - len(nuevas_entidades)]
+        self.entidades.extend(nuevas_entidades)
 
     def obtener_estado(self):
         return {
@@ -51,11 +75,28 @@ class Mundo:
             'estadisticas': {
                 'total_entidades': len(self.entidades),
                 'total_comida': len(self.recursos['comida']),
+                'total_agua': len(self.recursos['agua']),
                 'total_arboles': len(self.recursos['arboles']),
                 'promedio_energia': sum(e.energia for e in self.entidades) / len(self.entidades) if self.entidades else 0,
                 'promedio_puntuacion': sum(e.puntuacion for e in self.entidades) / len(self.entidades) if self.entidades else 0,
-                }
-            }
+                'generacion_maxima': max(e.generacion for e in self.entidades) if self.entidades else 0,
+                'mejor_puntuacion': max(e.puntuacion for e in self.entidades) if self.entidades else 0,
+                'peor_puntuacion': min(e.puntuacion for e in self.entidades) if self.entidades else 0,
+            },
+            'mejores_entidades': sorted([entidad.to_dict() for entidad in self.entidades], key=lambda x: x['puntuacion'], reverse=True)[:5],
+            'distribucion_genes': self.obtener_distribucion_genes(),
+        }
+
+    def obtener_distribucion_genes(self):
+        distribucion = {gen: [] for gen in self.entidades[0].genes.keys()} if self.entidades else {}
+        for entidad in self.entidades:
+            for gen, valor in entidad.genes.items():
+                distribucion[gen].append(valor)
+        return {gen: {
+            'min': min(valores),
+            'max': max(valores),
+            'promedio': sum(valores) / len(valores)
+        } for gen, valores in distribucion.items()}
 
     def poblar_mundo(self, num_entidades):
         db = next(get_db())

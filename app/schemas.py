@@ -7,6 +7,13 @@ class EntidadSchema(BaseModel):
     posicion_y: float
     energia: float
     puntuacion: float
+    recompensa_promedio: float
+    perdida_promedio: float
+    epsilon: float
+    genes: dict
+    generacion: int
+    acciones_tomadas: dict
+    edad: int
 
     class Config:
         orm_mode = True

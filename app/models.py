@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, String
+from sqlalchemy import Column, Integer, Float, String, JSON
 from app.database import Base
 
 class Entidad(Base):
@@ -13,3 +13,7 @@ class Entidad(Base):
     recompensa_promedio = Column(Float, default=0)
     perdida_promedio = Column(Float, default=0)
     epsilon = Column(Float, default=1.0)
+    genes = Column(JSON)
+    generacion = Column(Integer, default=1)
+    acciones_tomadas = Column(JSON, default={})
+    edad = Column(Integer, default=0)
