@@ -1,0 +1,65 @@
+body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#mundo {
+    width: 500px;
+    height: 500px;
+    border: 1px solid black;
+    position: relative;
+    background-color: #f0f0f0;
+}
+
+.entidad {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    background-color: #0015ff;  /* Color por defecto */
+}
+
+.comida {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background-color: #ff6200;
+    position: absolute;
+    transform: translate(-50%, -50%);
+}
+
+.arbol {
+    width: 10px;
+    height: 10px;
+    background-color: #00ff00;
+    position: absolute;
+    transform: translate(-50%, -50%);
+}
+
+#info-entrenamiento {
+    margin-top: 20px;
+    width: 500px;
+    text-align: left;
+}
+
+#info-entrenamiento h2 {
+    text-align: center;
+}
+
+#info-entrenamiento h3 {
+    margin-bottom: 5px;
+}
+
+#info-entrenamiento p {
+    margin: 2px 0;
+}
+
+#info-entrenamiento .descripcion {
+    font-size: 0.9em;
+    color: #666;
+    margin-top: 0;
+    margin-bottom: 10px;
+}
