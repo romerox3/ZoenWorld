@@ -28,6 +28,26 @@ class Mundo:
         self.thread = threading.Thread(target=self.bucle_principal)
         self.thread.start()
 
+    def pausar(self):
+        self.running = False
+
+    def reanudar(self):
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self.bucle_principal)
+            self.thread.start()
+
+    def reiniciar(self):
+        self.running = False
+        if self.thread:
+            self.thread.join()
+        self.entidades = []
+        self.recursos = self.generar_recursos()
+        self.tiempo = 0
+        self.temperatura = 20
+        self.logs = []
+        self.iniciar()
+
     def bucle_principal(self):
         while self.running:
             self.actualizar()
@@ -70,6 +90,10 @@ class Mundo:
         
         self.tiempo += 1
         self.actualizar_temperatura()
+
+        # Regenerar recursos periódicamente
+        if self.tiempo % config.INTERVALO_REGENERACION_RECURSOS == 0:
+            self.regenerar_recursos()
 
     def regenerar_recursos(self):
         for tipo_recurso in ['comida', 'agua']:
@@ -119,6 +143,8 @@ class Mundo:
             entidad = EntidadIA(f"{self.random_name()}", x, y, config.ENERGIA_INICIAL)
             db_entidad = EntidadModel(**entidad.to_dict())
             db.add(db_entidad)
+            db.flush()  # Esto asigna un ID a la entidad en la base de datos
+            entidad.id = db_entidad.id  # Asigna el ID de la base de datos a la entidad en memoria
             self.entidades.append(entidad)
         db.commit()
         print(f"Se han creado {num_entidades} entidades en el mundo.")

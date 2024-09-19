@@ -6,11 +6,19 @@ from app.services.mundo import Mundo
 import asyncio
 import json
 import logging
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -52,3 +60,18 @@ async def crear_entidad(nombre: str, x: int, y: int):
     except Exception as e:
         logger.error(f"Error al crear entidad: {str(e)}")
         return {"error": str(e)}
+
+@app.post("/pausar")
+async def pausar_simulacion():
+    mundo.pausar()
+    return {"mensaje": "Simulación pausada"}
+
+@app.post("/reanudar")
+async def reanudar_simulacion():
+    mundo.reanudar()
+    return {"mensaje": "Simulación reanudada"}
+
+@app.post("/reiniciar")
+async def reiniciar_simulacion():
+    mundo.reiniciar()
+    return {"mensaje": "Simulación reiniciada"}

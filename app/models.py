@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, Float, String, JSON
 from app.database import Base
+from sqlalchemy import ForeignKey
 
 class Entidad(Base):
     __tablename__ = "entidades"
@@ -23,3 +24,6 @@ class Entidad(Base):
     cambio_energia = Column(Float, default=0)
     interacciones_recientes = Column(JSON, default={})
     logs = Column(JSON, default=[])
+    pesos_red_neuronal = Column(JSON)
+    padre_id = Column(Integer, ForeignKey('entidades.id'))
+    madre_id = Column(Integer, ForeignKey('entidades.id'))

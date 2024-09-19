@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 from dataclasses import dataclass
 from app.services.configuracion import config
+from faker import Faker
 
 @dataclass
 class LogEntidad:
@@ -54,7 +55,8 @@ class Estado:
     peligro: float
 
 class EntidadIA:
-    def __init__(self, nombre, posicion_x, posicion_y, energia, genes=None):
+    def __init__(self, nombre, posicion_x, posicion_y, energia, genes=None, id=None):
+        self.id = id
         self.nombre = nombre
         self.posicion_x = posicion_x
         self.posicion_y = posicion_y
@@ -73,13 +75,15 @@ class EntidadIA:
         self.hambre = 0
         self.sed = 0
         self.edad = 0
-        self.acciones_tomadas = {i: 0 for i in range(8)}
+        self.acciones_tomadas = {i: 0 for i in range(9)}
         self.cambio_puntuacion = 0
         self.cambio_energia = 0
         self.historial_puntuacion = deque(maxlen=10)
         self.historial_energia = deque(maxlen=10)
         self.interacciones_recientes = []
         self.logs = []
+        self.padre_id = None
+        self.madre_id = None
 
     def agregar_log(self, accion, detalles):
         self.logs.append(LogEntidad(tiempo=self.edad, accion=accion, detalles=detalles))
@@ -99,12 +103,11 @@ class EntidadIA:
         }
 
     def crear_red_neuronal(self):
-        inteligencia = max(1, int(self.genes['inteligencia'] * 64))
         modelo = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(28,)),  # Tamaño del estado actualizado (número de campos en Estado)
-            tf.keras.layers.Dense(inteligencia, activation='relu'),
-            tf.keras.layers.Dense(inteligencia // 2, activation='relu'),
-            tf.keras.layers.Dense(8, activation='linear')
+            tf.keras.layers.Input(shape=(28,)),
+            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(32, activation='relu'),
+            tf.keras.layers.Dense(9, activation='softmax')
         ])
         modelo.compile(optimizer='adam', loss='mse')
         return modelo
@@ -147,14 +150,15 @@ class EntidadIA:
         return np.array(estado)
 
     def actualizar(self, mundo):
-        self.edad += 1
+        self.envejecer()
         self.hambre += 1
         self.sed += 1
         
-        # Reducir energía basada en el metabolismo
-        self.energia = max(config.MIN_ENERGIA, self.energia - 0.5 * self.genes['metabolismo'])
-        self.agregar_log("Actualizar", f"Energía: {self.energia}")
-
+        factor_edad = 1 + (self.edad / config.EDAD_MAXIMA) * 0.5
+        consumo_energia = 0.5 * self.genes['metabolismo'] * factor_edad
+        self.energia = max(config.MIN_ENERGIA, self.energia - consumo_energia)
+        self.agregar_log("Actualizar", f"Energía: {self.energia}, Consumo de energía: {consumo_energia}")
+        
         # Actualizar epsilon para la exploración
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
@@ -193,38 +197,55 @@ class EntidadIA:
 
     def tomar_decision(self, estado):
         if np.random.rand() <= self.epsilon:
-            return np.random.randint(6)
+            return np.random.randint(9)  # Ahora incluimos 9 acciones posibles
         q_valores = self.red_neuronal.predict(np.array([estado]))[0]
         return np.argmax(q_valores)
 
+    @tf.function(reduce_retracing=True)
+    def entrenar_paso(self, estados, acciones, recompensas, nuevos_estados):
+        estados = tf.cast(estados, tf.float32)
+        acciones = tf.cast(acciones, tf.int32)
+        recompensas = tf.cast(recompensas, tf.float32)
+        nuevos_estados = tf.cast(nuevos_estados, tf.float32)
+
+        with tf.GradientTape() as tape:
+            q_valores = self.red_neuronal(estados)
+            q_valores_siguientes = self.red_neuronal(nuevos_estados)
+            
+            targets = recompensas + tf.cast(config.FACTOR_DESCUENTO, tf.float32) * tf.reduce_max(q_valores_siguientes, axis=1)
+            masks = tf.one_hot(acciones, 9)
+            q_valores_accion = tf.reduce_sum(tf.multiply(q_valores, masks), axis=1)
+            
+            loss = tf.keras.losses.MSE(targets, q_valores_accion)
+        
+        gradients = tape.gradient(loss, self.red_neuronal.trainable_variables)
+        self.red_neuronal.optimizer.apply_gradients(zip(gradients, self.red_neuronal.trainable_variables))
+        return loss
+
     def entrenar(self):
+        if len(self.buffer_experiencia) < config.TAMANO_MINIBATCH:
+            return 0
+
         minibatch = random.sample(self.buffer_experiencia, config.TAMANO_MINIBATCH)
         estados = np.array([estado for estado, _, _, _ in minibatch])
-        
+        acciones = np.array([accion for _, accion, _, _ in minibatch])
+        recompensas = np.array([recompensa for _, _, recompensa, _ in minibatch])
         nuevos_estados = np.array([nuevo_estado for _, _, _, nuevo_estado in minibatch])
-        
-        q_valores = self.red_neuronal.predict(estados)
-        q_valores_siguientes = self.red_neuronal.predict(nuevos_estados)
-        
-        x = []
-        y = []
-        for i, (estado, accion, recompensa, _) in enumerate(minibatch):
-            if recompensa == -10:  # Si la entidad murió
-                target = recompensa
-            else:
-                target = recompensa + config.FACTOR_DESCUENTO * np.amax(q_valores_siguientes[i])
-            
-            target_f = q_valores[i]
-            target_f[accion] = target
-            x.append(estado)
-            y.append(target_f)
-        
-        historia = self.red_neuronal.fit(np.array(x), np.array(y), epochs=1, verbose=0)
-        self.historial_perdidas.append(historia.history['loss'][0])
+
+        factor_edad = max(0, 1 - (self.edad / config.EDAD_MAXIMA))
+        factor_inteligencia = self.genes['inteligencia']
+        tasa_aprendizaje = config.TASA_APRENDIZAJE_BASE * factor_inteligencia
+        factor_descuento = config.FACTOR_DESCUENTO_BASE * factor_inteligencia
+
+        recompensas = recompensas * factor_edad
+
+        loss = self.entrenar_paso(estados, acciones, recompensas, nuevos_estados)
+
+        self.historial_perdidas.append(loss.numpy())
         if len(self.historial_perdidas) > 100:
             self.historial_perdidas.pop(0)
-        
-        return historia.history['loss'][0]
+
+        return loss.numpy()
 
     def ejecutar_accion(self, decision, mundo):
         recompensa = 0
@@ -232,16 +253,16 @@ class EntidadIA:
         
         if decision < 4:  # Movimiento
             if decision == 0:  # Mover arriba
-                self.posicion_y = min(config.MAX_Y, self.posicion_y + 1 * self.genes['velocidad'])
+                self.posicion_y = min(config.MAX_Y, self.posicion_y + config.DISTANCIA_MOVIMIENTO * self.genes['velocidad'])
                 self.agregar_log("Actualizar", f"Mover arriba: {self.posicion_y}")
             elif decision == 1:  # Mover abajo
-                self.posicion_y = max(config.MIN_Y, self.posicion_y - 1 * self.genes['velocidad'])
+                self.posicion_y = max(config.MIN_Y, self.posicion_y - config.DISTANCIA_MOVIMIENTO * self.genes['velocidad'])
                 self.agregar_log("Actualizar", f"Mover abajo: {self.posicion_y}")
             elif decision == 2:  # Mover izquierda
-                self.posicion_x = max(config.MIN_X, self.posicion_x - 1 * self.genes['velocidad'])
+                self.posicion_x = max(config.MIN_X, self.posicion_x - config.DISTANCIA_MOVIMIENTO * self.genes['velocidad'])
                 self.agregar_log("Actualizar", f"Mover izquierda: {self.posicion_x}")
             elif decision == 3:  # Mover derecha
-                self.posicion_x = min(config.MAX_X, self.posicion_x + 1 * self.genes['velocidad'])
+                self.posicion_x = min(config.MAX_X, self.posicion_x + config.DISTANCIA_MOVIMIENTO * self.genes['velocidad'])
                 self.agregar_log("Actualizar", f"Mover derecha: {self.posicion_x}")
             consumo_energia *= config.MULTIPLICADOR_CONSUMO_MOVIMIENTO
             self.agregar_log("Actualizar", f"Consumo de energía: {consumo_energia}")
@@ -279,6 +300,18 @@ class EntidadIA:
                 self.agregar_log("Actualizar", f"Socializar: {beneficio}, Energía: {self.energia}, Recompensa: {recompensa}")
             else:
                 recompensa = config.PENALIZACION_ACCION_FALLIDA
+        elif decision == 8:  # Reproducción
+            entidad_cercana = mundo.obtener_entidad_mas_cercana(self.posicion_x, self.posicion_y)
+            if entidad_cercana and self.esta_lista_para_reproducirse() and entidad_cercana.esta_lista_para_reproducirse():
+                hijo = self.reproducir(entidad_cercana)
+                mundo.entidades.append(hijo)
+                self.energia -= config.COSTO_ENERGIA_REPRODUCCION
+                entidad_cercana.energia -= config.COSTO_ENERGIA_REPRODUCCION
+                recompensa = config.RECOMPENSA_REPRODUCCION
+                self.agregar_log("Reproducir", f"Reproducción exitosa con {entidad_cercana.nombre}")
+            else:
+                recompensa = config.PENALIZACION_ACCION_FALLIDA
+                self.agregar_log("Reproducir", "Intento de reproducción fallido")
         
         self.energia = max(config.MIN_ENERGIA, self.energia - consumo_energia)
         self.agregar_log("Actualizar", f"Energía: {self.energia}, Consumo de energía: {consumo_energia}")
@@ -291,6 +324,10 @@ class EntidadIA:
         elif self.energia > config.UMBRAL_ENERGIA_ALTA:
             recompensa += config.RECOMPENSA_ENERGIA_ALTA
             self.agregar_log("Actualizar", f"Recompensa: {recompensa}, Energía: {self.energia}")
+
+        factor_edad = max(0.5, 1 - (self.edad / config.EDAD_MAXIMA))
+        recompensa *= factor_edad
+        self.agregar_log("Actualizar", f"Recompensa ajustada por edad: {recompensa}")
 
         # Actualizar la puntuación de la entidad
         self.puntuacion += recompensa
@@ -316,6 +353,16 @@ class EntidadIA:
             pesos_ajustados.append(peso_ajustado)
         return pesos_ajustados
 
+    def combinar_pesos(self, p_padre, p_madre):
+        if isinstance(p_padre, list) and isinstance(p_madre, list):
+            return [self.combinar_pesos(pp, pm) for pp, pm in zip(p_padre, p_madre)]
+        else:
+            return (np.array(p_padre) + np.array(p_madre)) / 2
+
+    def random_name(self):
+        faker = Faker()
+        return faker.name().split(" ")[0]
+
     def reproducir(self, pareja):
         self.agregar_log("Reproducir", f"Reproducir: {self.nombre} y {pareja.nombre}")
         nuevos_genes = {}
@@ -328,25 +375,26 @@ class EntidadIA:
             if random.random() < config.PROBABILIDAD_MUTACION:
                 nuevos_genes[gen] *= random.uniform(config.RANGO_MUTACION_MIN, config.RANGO_MUTACION_MAX)
         
-        nueva_entidad = EntidadIA(f"Hijo de {self.nombre} y {pareja.nombre}", 
-                                  (self.posicion_x + pareja.posicion_x) / 2,
-                                  (self.posicion_y + pareja.posicion_y) / 2,
-                                  config.ENERGIA_INICIAL, nuevos_genes)
+        nueva_entidad = EntidadIA(f"{self.random_name()}", 
+                                (self.posicion_x + pareja.posicion_x) / 2,
+                                (self.posicion_y + pareja.posicion_y) / 2,
+                                config.ENERGIA_INICIAL, nuevos_genes, id=None)  # Asignamos None como ID temporal
         nueva_entidad.generacion = max(self.generacion, pareja.generacion) + 1
+        nueva_entidad.padre_id = self.id
+        nueva_entidad.madre_id = pareja.id
         
         # Transferencia de conocimiento
-        try:
-            pesos_padre = self.ajustar_pesos(self.red_neuronal.get_weights(), nueva_entidad.red_neuronal.get_weights())
-            pesos_madre = self.ajustar_pesos(pareja.red_neuronal.get_weights(), nueva_entidad.red_neuronal.get_weights())
-            
-            nueva_entidad.red_neuronal.set_weights([
-                (pesos_padre[i] + pesos_madre[i]) / 2
-                for i in range(len(pesos_padre))
-            ])
-        except Exception as e:
-            print(f"Error al transferir conocimiento: {e}")
-            # En caso de error, mantenemos la red neuronal original de la nueva entidad
-            pass
+        pesos_padre = self.obtener_pesos_red_neuronal()
+        pesos_madre = pareja.obtener_pesos_red_neuronal()
+        
+        # Combinar los pesos de los padres
+        pesos_hijo = []
+        for p_padre, p_madre in zip(pesos_padre, pesos_madre):
+            p_hijo = np.array(self.combinar_pesos(p_padre, p_madre))
+            pesos_hijo.append(p_hijo)
+        
+        # Establecer los pesos combinados en la red neuronal del hijo
+        nueva_entidad.red_neuronal.set_weights(pesos_hijo)
 
         self.agregar_log("Reproducir", f"Nueva entidad: {nueva_entidad.nombre}")
         return nueva_entidad
@@ -358,27 +406,41 @@ class EntidadIA:
             "epsilon": self.epsilon
         }
 
+    def obtener_pesos_red_neuronal(self):
+        return [peso.tolist() for peso in self.red_neuronal.get_weights()]
+
     def to_dict(self):
         metricas = self.obtener_metricas_aprendizaje()
         return {
             "nombre": self.nombre,
-            "posicion_x": self.posicion_x,
-            "posicion_y": self.posicion_y,
-            "energia": self.energia,
-            "puntuacion": self.puntuacion,
-            "recompensa_promedio": metricas["recompensa_promedio"],
-            "perdida_promedio": metricas["perdida_promedio"],
-            "epsilon": metricas["epsilon"],
-            "genes": self.genes,
-            "generacion": self.generacion,
-            "acciones_tomadas": self.acciones_tomadas,
-            "edad": self.edad,
-            "hambre": self.hambre,
-            "sed": self.sed,
-            "cambio_puntuacion": self.cambio_puntuacion,
-            "cambio_energia": self.cambio_energia,
-            "logs": [log.to_dict() for log in self.logs]
+            "posicion_x": float(self.posicion_x),
+            "posicion_y": float(self.posicion_y),
+            "energia": float(self.energia),
+            "puntuacion": float(self.puntuacion),
+            "recompensa_promedio": float(metricas["recompensa_promedio"]),
+            "perdida_promedio": float(metricas["perdida_promedio"]),
+            "epsilon": float(metricas["epsilon"]),
+            "genes": {k: float(v) for k, v in self.genes.items()},
+            "generacion": int(self.generacion),
+            "acciones_tomadas": {int(k): int(v) for k, v in self.acciones_tomadas.items()},
+            "edad": int(self.edad),
+            "hambre": float(self.hambre),
+            "sed": float(self.sed),
+            "cambio_puntuacion": float(self.cambio_puntuacion),
+            "cambio_energia": float(self.cambio_energia),
+            "interacciones_recientes": self.interacciones_recientes,
+            "logs": [log.to_dict() for log in self.logs],
+            "pesos_red_neuronal": self.obtener_pesos_red_neuronal(),
+            "padre_id": self.padre_id,
+            "madre_id": self.madre_id
         }
 
     def esta_lista_para_reproducirse(self):
         return self.edad >= config.EDAD_REPRODUCCION and self.energia > config.ENERGIA_REPRODUCCION and self.puntuacion > config.PUNTUACION_REPRODUCCION
+
+    def envejecer(self):
+        self.edad += 1
+        # Reducir gradualmente la energía máxima con la edad
+        energia_maxima = config.MAX_ENERGIA * (1 - self.edad / config.EDAD_MAXIMA)
+        self.energia = min(self.energia, energia_maxima)
+        self.agregar_log("Envejecer", f"Edad: {self.edad}, Energía máxima: {energia_maxima:.2f}")
