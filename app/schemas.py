@@ -14,6 +14,9 @@ class EntidadSchema(BaseModel):
     generacion: int
     acciones_tomadas: dict
     edad: int
-
+    hambre: float
+    sed: float
+    logs: list
+    
     class Config:
         orm_mode = True

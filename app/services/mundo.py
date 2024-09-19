@@ -1,70 +1,81 @@
-import threading
+import random
 import time
+import threading
 import numpy as np
-from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Entidad as EntidadModel
-from app.services.entidad import EntidadIA 
+from app.services.entidad import EntidadIA
+from app.services.configuracion import config
+import string
+from faker import Faker
 
 class Mundo:
     def __init__(self):
         self.entidades = []
         self.thread = None
         self.running = False
-        self.ancho = 500
-        self.alto = 500
+        self.ancho = config.ANCHO_MUNDO
+        self.alto = config.ALTO_MUNDO
         self.recursos = self.generar_recursos()
         self.tiempo = 0
         self.temperatura = 20
-        self.tiempo_reproduccion = 1000  # Tiempo entre reproducciones
+        self.tiempo_reproduccion = config.TIEMPO_REPRODUCCION
+        self.logs = []
 
     def iniciar(self):
         self.running = True
-        self.poblar_mundo(10)  # Crear 10 entidades al iniciar
+        self.poblar_mundo(config.NUMERO_INICIAL_ENTIDADES)
         self.thread = threading.Thread(target=self.bucle_principal)
         self.thread.start()
 
     def bucle_principal(self):
         while self.running:
             self.actualizar()
-            time.sleep(1)  # Actualizar cada segundo
+            time.sleep(config.INTERVALO_ACTUALIZACION)
+
+    def obtener_entidad_mas_cercana(self, x, y):
+        entidades_cercanas = sorted(
+            [e for e in self.entidades if e.posicion_x != x or e.posicion_y != y],
+            key=lambda e: ((e.posicion_x - x)**2 + (e.posicion_y - y)**2)**0.5
+        )
+        return entidades_cercanas[0] if entidades_cercanas else None
 
     def actualizar(self):
-        self.tiempo += 1
-        self.actualizar_temperatura()
-        db = next(get_db())
-        
-        # Reproducción
-        if self.tiempo % self.tiempo_reproduccion == 0:
-            self.reproducir_entidades()
+        entidades_a_eliminar = []
+        nuevas_entidades = []
         
         for entidad in self.entidades:
             entidad.actualizar(self)
-            db_entidad = db.query(EntidadModel).filter(EntidadModel.nombre == entidad.nombre).first()
-            if db_entidad:
-                db_entidad.posicion_x = entidad.posicion_x
-                db_entidad.posicion_y = entidad.posicion_y
-                db_entidad.energia = entidad.energia
-                db_entidad.puntuacion = entidad.puntuacion
-                db_entidad.genes = entidad.genes
-                db_entidad.generacion = entidad.generacion
-        db.commit()
-
-    def reproducir_entidades(self):
-        nuevas_entidades = []
-        entidades_ordenadas = sorted(self.entidades, key=lambda e: e.puntuacion, reverse=True)
-        num_reproducir = len(entidades_ordenadas) // 2
+            
+            # Verificar si la entidad muere
+            if entidad.energia <= config.MIN_ENERGIA or entidad.edad > config.EDAD_MAXIMA:
+                entidades_a_eliminar.append(entidad)
+            
+            # Verificar si la entidad está lista para reproducirse
+            elif entidad.esta_lista_para_reproducirse():
+                posibles_parejas = [e for e in self.entidades if e != entidad and e.esta_lista_para_reproducirse()]
+                if posibles_parejas:
+                    pareja = random.choice(posibles_parejas)
+                    hijo = entidad.reproducir(pareja)
+                    nuevas_entidades.append(hijo)
+                    entidad.energia -= config.COSTO_ENERGIA_REPRODUCCION
+                    pareja.energia -= config.COSTO_ENERGIA_REPRODUCCION
         
-        for i in range(num_reproducir):
-            padre = entidades_ordenadas[i]
-            madre = random.choice(entidades_ordenadas[:num_reproducir])
-            if padre != madre:
-                hijo = padre.reproducir(madre)
-                nuevas_entidades.append(hijo)
+        # Eliminar entidades muertas
+        for entidad in entidades_a_eliminar:
+            self.entidades.remove(entidad)
         
-        # Eliminar las entidades con peor desempeño
-        self.entidades = entidades_ordenadas[:len(self.entidades) - len(nuevas_entidades)]
+        # Añadir nuevas entidades
         self.entidades.extend(nuevas_entidades)
+        
+        self.tiempo += 1
+        self.actualizar_temperatura()
+
+    def regenerar_recursos(self):
+        for tipo_recurso in ['comida', 'agua']:
+            while len(self.recursos[tipo_recurso]) < config.NUMERO_INICIAL_RECURSOS:
+                nuevo_id = max([r[0] for r in self.recursos[tipo_recurso]] + [0]) + 1
+                self.recursos[tipo_recurso].append((nuevo_id, np.random.randint(config.MIN_X, config.MAX_X), np.random.randint(config.MIN_Y, config.MAX_Y)))
 
     def obtener_estado(self):
         return {
@@ -85,6 +96,8 @@ class Mundo:
             },
             'mejores_entidades': sorted([entidad.to_dict() for entidad in self.entidades], key=lambda x: x['puntuacion'], reverse=True)[:5],
             'distribucion_genes': self.obtener_distribucion_genes(),
+            'logs': self.logs,
+            'logs_entidades': {entidad.nombre: [log.to_dict() for log in entidad.logs] for entidad in self.entidades}
         }
 
     def obtener_distribucion_genes(self):
@@ -101,51 +114,86 @@ class Mundo:
     def poblar_mundo(self, num_entidades):
         db = next(get_db())
         for i in range(num_entidades):
-            x = np.random.randint(-250, 250)
-            y = np.random.randint(-250, 250)
-            entidad = EntidadIA(f"Entidad_{i}", x, y, 100)
+            x = np.random.randint(config.MIN_X, config.MAX_X)
+            y = np.random.randint(config.MIN_Y, config.MAX_Y)
+            entidad = EntidadIA(f"{self.random_name()}", x, y, config.ENERGIA_INICIAL)
             db_entidad = EntidadModel(**entidad.to_dict())
             db.add(db_entidad)
             self.entidades.append(entidad)
         db.commit()
         print(f"Se han creado {num_entidades} entidades en el mundo.")
 
+    def random_name(self):
+        faker = Faker()
+        return faker.name().split(" ")[0]
+
+    def consumir_recurso(self, x, y, tipo_recurso, nombre_entidad=None):
+        recursos_cercanos = [r for r in self.recursos[tipo_recurso] if ((r[1] - x)**2 + (r[2] - y)**2)**0.5 <= 10]
+        if recursos_cercanos:
+            recurso = min(recursos_cercanos, key=lambda r: ((r[1] - x)**2 + (r[2] - y)**2)**0.5)
+            self.recursos[tipo_recurso] = [r for r in self.recursos[tipo_recurso] if r[0] != recurso[0]]
+            if nombre_entidad:
+                self.logs.append(f"{nombre_entidad} consumió {tipo_recurso}.")
+            else:
+                self.logs.append(f"Entidad consumió {tipo_recurso}.")
+            return 1
+        return 0
+
     def generar_recursos(self):
         recursos = {'comida': [], 'agua': [], 'arboles': []}
-        for _ in range(50):  # Generar 50 puntos de comida, agua y árboles
-            recursos['comida'].append((np.random.randint(-250, 250), np.random.randint(-250, 250)))
-            recursos['agua'].append((np.random.randint(-250, 250), np.random.randint(-250, 250)))
-            recursos['arboles'].append((np.random.randint(-250, 250), np.random.randint(-250, 250)))
+        for i in range(config.NUMERO_INICIAL_RECURSOS):
+            recursos['comida'].append((i, np.random.randint(config.MIN_X, config.MAX_X), np.random.randint(config.MIN_Y, config.MAX_Y)))
+            recursos['agua'].append((i+config.NUMERO_INICIAL_RECURSOS, np.random.randint(config.MIN_X, config.MAX_X), np.random.randint(config.MIN_Y, config.MAX_Y)))
+            recursos['arboles'].append((i+2*config.NUMERO_INICIAL_RECURSOS, np.random.randint(config.MIN_X, config.MAX_X), np.random.randint(config.MIN_Y, config.MAX_Y)))
         return recursos
 
     def obtener_recursos_cercanos(self, x, y):
-        comida_cercana = sum(1 for rx, ry in self.recursos['comida'] if abs(x-rx) < 50 and abs(y-ry) < 50)
-        agua_cercana = sum(1 for rx, ry in self.recursos['agua'] if abs(x-rx) < 50 and abs(y-ry) < 50)
-        arboles_cercanos = sum(1 for rx, ry in self.recursos['arboles'] if abs(x-rx) < 50 and abs(y-ry) < 50)
-        return {'comida': comida_cercana, 'agua': agua_cercana, 'arboles': arboles_cercanos}
+        direcciones = ['norte', 'sur', 'este', 'oeste']
+        recursos = {tipo: {dir: 0 for dir in direcciones} for tipo in ['comida', 'agua', 'arboles']}
+        
+        for tipo in recursos:
+            for _, rx, ry in self.recursos[tipo]:
+                dx, dy = rx - x, ry - y
+                distancia = (dx**2 + dy**2)**0.5
+                if distancia < config.DISTANCIA_VISION_RECURSOS:
+                    if abs(dx) > abs(dy):
+                        dir = 'este' if dx > 0 else 'oeste'
+                    else:
+                        dir = 'norte' if dy > 0 else 'sur'
+                    recursos[tipo][dir] += 1 / (distancia + 1)  # +1 para evitar división por cero
+        
+        return recursos
 
     def obtener_entidades_cercanas(self, x, y):
-        aliados = sum(1 for e in self.entidades if abs(x-e.posicion_x) < 50 and abs(y-e.posicion_y) < 50)
-        return {'aliados': aliados, 'enemigos': 0}  # Por ahora no hay enemigos
+        direcciones = ['norte', 'sur', 'este', 'oeste']
+        entidades = {dir: 0 for dir in direcciones}
+        
+        for entidad in self.entidades:
+            if entidad.posicion_x == x and entidad.posicion_y == y:
+                continue
+            dx, dy = entidad.posicion_x - x, entidad.posicion_y - y
+            distancia = (dx**2 + dy**2)**0.5
+            if distancia < config.DISTANCIA_VISION_RECURSOS:
+                if abs(dx) > abs(dy):
+                    dir = 'este' if dx > 0 else 'oeste'
+                else:
+                    dir = 'norte' if dy > 0 else 'sur'
+                entidades[dir] += 1 / (distancia + 1)  # +1 para evitar división por cero
+        
+        return entidades
 
     def obtener_tiempo_del_dia(self):
-        return (self.tiempo % 24) / 24.0
+        return (self.tiempo % config.CICLO_DIA) / config.CICLO_DIA
 
     def obtener_temperatura(self):
         return self.temperatura
 
     def obtener_peligro(self, x, y):
-        # Por ahora, el peligro es aleatorio
-        return np.random.random()
-
-    def comer(self, x, y):
-        for i, (rx, ry) in enumerate(self.recursos['comida']):
-            if abs(x-rx) < 10 and abs(y-ry) < 10:
-                del self.recursos['comida'][i]
-                self.recursos['comida'].append((np.random.randint(-250, 250), np.random.randint(-250, 250)))
-                return 5  # Recompensa por comer
-        return 0
+        # Implementar lógica de peligro basada en la posición y otros factores
+        return random.random()  # Por ahora, retornamos un valor aleatorio entre 0 y 1
 
     def actualizar_temperatura(self):
-        hora = self.tiempo % 24
-        self.temperatura = 20 + 10 * np.sin(np.pi * hora / 12)  # Varía entre 10 y 30 grados
+        # Simular cambios de temperatura basados en el tiempo del día
+        hora_del_dia = self.obtener_tiempo_del_dia() * 24
+        self.temperatura = 20 + 10 * np.sin((hora_del_dia - 6) * np.pi / 12)
+        self.temperatura = max(config.MIN_TEMPERATURA, min(config.MAX_TEMPERATURA, self.temperatura))

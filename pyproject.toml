@@ -16,6 +16,7 @@ psycopg2-binary = "^2.9.1"
 aiofiles = "^0.8.0"
 alembic = "^1.7.5"
 websockets = "^10.0"
+faker = "^18.9.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.5"

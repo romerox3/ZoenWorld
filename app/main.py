@@ -5,6 +5,10 @@ from app.database import engine, Base
 from app.services.mundo import Mundo
 import asyncio
 import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -39,3 +43,12 @@ async def websocket_endpoint(websocket: WebSocket):
         estado = mundo.obtener_estado()
         await websocket.send_text(json.dumps(estado))
         await asyncio.sleep(1)  # Enviar actualizaciones cada segundo
+
+@app.post("/entidad")
+async def crear_entidad(nombre: str, x: int, y: int):
+    try:
+        nueva_entidad = mundo.crear_entidad(nombre, x, y)
+        return {"mensaje": f"Entidad {nombre} creada en ({x}, {y})"}
+    except Exception as e:
+        logger.error(f"Error al crear entidad: {str(e)}")
+        return {"error": str(e)}
