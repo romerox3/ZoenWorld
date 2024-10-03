@@ -1,4 +1,7 @@
-FROM python:3.9
+FROM tensorflow/tensorflow:latest-gpu
+
+ENV TF_CPP_MIN_LOG_LEVEL=2
+ENV TF_ENABLE_ONEDNN_OPTS=0
 
 WORKDIR /app
 

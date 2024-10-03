@@ -4,9 +4,9 @@ class Configuracion:
         self.ANCHO_MUNDO = 100
         self.ALTO_MUNDO = 100
         self.TIEMPO_REPRODUCCION = 50
-        self.NUMERO_INICIAL_ENTIDADES = 30
+        self.NUMERO_INICIAL_ENTIDADES = 15
         self.NUMERO_INICIAL_RECURSOS = 150
-        self.INTERVALO_ACTUALIZACION = 1  # en segundos
+        self.INTERVALO_ACTUALIZACION = 0.5  # en segundos
 
         # Límites del mundo
         self.MIN_X = -200
@@ -70,7 +70,7 @@ class Configuracion:
         self.RECOMPENSA_AGUA = 9
         self.RECOMPENSA_ATAQUE = 3
         self.RECOMPENSA_SOCIALIZACION = 3
-        self.PENALIZACION_ACCION_FALLIDA = -5
+        self.PENALIZACION_ACCION_FALLIDA = -1
         self.ENERGIA_POR_COMIDA = 40
         self.ENERGIA_POR_AGUA = 20
         self.REDUCCION_HAMBRE_POR_COMIDA = 50
@@ -88,6 +88,9 @@ class Configuracion:
         self.MAX_RECURSOS = 100
         self.DISTANCIA_VISION_RECURSOS = 100
         self.INTERVALO_REGENERACION_RECURSOS = 10  # Cada cuántas actualizaciones se regeneran los recursos
+        self.NUMERO_INICIAL_ARBOLES = 10  # Número inicial de árboles
+        self.DISTANCIA_ARBOLES_AGUA = 10  # Distancia máxima entre árboles y agua
+        self.DISTANCIA_COMIDA_ARBOLES = 10  # Distancia máxima entre comida y árboles
 
         # Configuración de clima
         self.MIN_TEMPERATURA = -30
@@ -101,12 +104,13 @@ class Configuracion:
         self.CICLO_DIA = 24
 
         # Configuración de IA
-        self.TAMANO_BUFFER_EXPERIENCIA = 2000
         self.TAMANO_MINIBATCH = 32
         self.EPSILON_INICIAL = 0.5
         self.EPSILON_MINIMO = 0.01
         self.EPSILON_DECAY = 0.995
         self.FACTOR_DESCUENTO = 0.95
+        self.ACTUALIZACION_RED_OBJETIVO = 100  # Cada cuántos pasos se actualiza la red objetivo
+        self.TAMANO_BUFFER_EXPERIENCIA = 10000  # Aumentar el tamaño del buffer
 
         # Logs
         self.MAX_LOGS_POR_ENTIDAD = 100

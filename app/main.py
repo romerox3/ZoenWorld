@@ -1,12 +1,16 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-from app.database import engine, Base
+from app.database import engine, Base, get_db
 from app.services.mundo import Mundo
+from app.services.logs import LogService
 import asyncio
 import json
 import logging
 from fastapi.middleware.cors import CORSMiddleware
+from app.schemas import LogCreate
+from sqlalchemy.orm import Session
+from app.database import AsyncSessionLocal
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,14 +26,18 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-Base.metadata.create_all(bind=engine)
-
-mundo = Mundo()
-
 @app.on_event("startup")
 async def startup_event():
-    mundo.iniciar()
+    global mundo
+    await create_tables()
+    async with AsyncSessionLocal() as db:
+        mundo = Mundo(db)
+        await mundo.iniciar()
     print("El mundo ha sido iniciado y poblado con entidades.")
+
+async def create_tables():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 @app.get("/")
 async def root():
@@ -63,15 +71,23 @@ async def crear_entidad(nombre: str, x: int, y: int):
 
 @app.post("/pausar")
 async def pausar_simulacion():
-    mundo.pausar()
+    await mundo.pausar()
     return {"mensaje": "Simulación pausada"}
 
 @app.post("/reanudar")
 async def reanudar_simulacion():
-    mundo.reanudar()
+    await mundo.reanudar()
     return {"mensaje": "Simulación reanudada"}
 
 @app.post("/reiniciar")
 async def reiniciar_simulacion():
-    mundo.reiniciar()
+    await mundo.reiniciar()
     return {"mensaje": "Simulación reiniciada"}
+
+@app.post("/logs")
+async def crear_log(log: LogCreate):
+    return await mundo.log_service.crear_log(log)
+
+@app.get("/logs")
+async def obtener_logs(entidad_id: int = None):
+    return await mundo.log_service.obtener_logs(entidad_id)
