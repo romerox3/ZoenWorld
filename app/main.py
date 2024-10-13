@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+import asyncio
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from app.world import World
 
@@ -17,6 +18,19 @@ world = World()
 @app.on_event("startup")
 async def startup_event():
     await world.initialize()
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    world.add_websocket_connection(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # Mantener la conexión abierta
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+    finally:
+        world.remove_websocket_connection(websocket)
+        await websocket.close()
 
 @app.get("/state")
 async def get_state():
